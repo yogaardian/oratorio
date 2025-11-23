@@ -30,31 +30,27 @@ function LoginPage() {
 
       const data = await response.json();
 
-      if (response.ok) {
-        setMessage("Login berhasil!");
 
-        // --- INI DIA PERUBAHANNYA ---
-        
-        // 6. Panggil fungsi 'login' dari context
-        // 'data.user' berisi objek user dari Flask (sesuai app.py kamu)
-        login(data.user); 
-
-        // 7. Pindahkan baris ini ke dalam 'if'
-        // Gunakan 'navigate' untuk pindah halaman (cara React)
-        navigate("/"); // atau "/dashboard" sesuai keinginanmu
-
-        // HAPUS KODE LAMA INI:
-        // localStorage.setItem(...)
-        // window.location.href = "/dashboard";
-
-      } else {
+      if (!response.ok) {
         setMessage(data.message || "Login gagal");
+        return;
       }
+
+      // Simpan user di context (dan localStorage)
+      login(data.user);
+
+      // === Redirection sesuai role ===
+      if (data.user.role === "admin") {
+        navigate("/admin/dashboard");
+      } else {
+        navigate("/dashboard");
+      }
+
     } catch (err) {
-      setMessage("Terjadi kesalahan server");
       console.error(err);
+      setMessage("Terjadi kesalahan server");
     }
-  };
+  }
 
   return (
     <div className="auth-page-wrapper">
