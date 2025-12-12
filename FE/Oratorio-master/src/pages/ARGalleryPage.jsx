@@ -196,6 +196,21 @@ const ARGalleryPage = () => {
                     <Link 
                       to={`/ar/${item.id}`} 
                       className="block w-full"
+                      onClick={async () => {
+                        try {
+                          await fetch('http://192.168.23.214:5000/api/history', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              destination_id: item.id,
+                              action: 'scan_start',
+                              started_at: new Date().toISOString()
+                            })
+                          });
+                        } catch (e) {
+                          console.error('Error posting history', e);
+                        }
+                      }}
                     >
                       <button className="w-full bg-[#005954] hover:bg-[#004440] text-white font-semibold py-3.5 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl group/btn">
                         <svg className="w-5 h-5 transition-transform group-hover/btn:translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
