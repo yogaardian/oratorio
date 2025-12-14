@@ -1,0 +1,26 @@
+name: oratorio_mobile
+description: A Flutter project for the Oratorio application.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+environment:
+  sdk: ">=2.18.0 <3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^0.13.3 # For making HTTP requests to the backend
+  provider: ^6.0.0 # For state management
+  flutter_tailwindcss: ^1.0.0 # For Tailwind CSS integration (if applicable)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/ # Add your image assets here
+    - assets/icons/ # Add your icon assets here
+
+# Note: Tailwind CSS is primarily for web development. 
+# In Flutter, you can create a custom theme or use similar styling approaches.

@@ -1,15 +1,30 @@
+# D:\yogss\oratorio\BE\OratorioBE-main\app.py (FILE TUNGGAL)
+
 import os
 import logging
 import json
-from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify, send_from_directory, Blueprint
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from db import get_connection
+from db import get_connection # Asumsi db.py ada
+import jwt
+from functools import wraps
+
+# --- INI ADALAH INISIALISASI FLASK-SQLAlchemy DAN FLASK-MIGRATE ---
+# Karena kita tidak menggunakan app/extensions.py, kita inisialisasi di sini.
+# Pastikan Anda sudah menginstal: pip install Flask-SQLAlchemy Flask-Migrate
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+
+db = SQLAlchemy()
+migrate = Migrate()
+# -----------------------------------------------------------------
 
 logging.basicConfig(level=logging.INFO)
 
+# --- APLIKASI UTAMA ---
 app = Flask(
     __name__,
     static_url_path="/assets",
@@ -17,7 +32,49 @@ app = Flask(
 )
 CORS(app)
 
-# Upload folder
+# Konfigurasi database untuk Flask-SQLAlchemy (ANDA HARUS MENGUBAH INI)
+# Ganti dengan koneksi database Anda yang sebenarnya
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://user:password@localhost/your_db' 
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Inisialisasi ekstensi ke aplikasi
+db.init_app(app)
+migrate.init_app(app, db)
+
+
+# --- SECURITY CONSTANTS & UTILITY ---
+SECRET_KEY = 'your_secret_key_here_for_jwt' # Ganti dengan key yang aman
+TOKEN_LIFESPAN = timedelta(hours=24) 
+
+def token_required(f):
+    """Decorator untuk memeriksa JWT token dan menyimpan user_id ke request.current_user_id."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        
+        if not token or not token.startswith('Bearer '):
+            return jsonify({'message': 'Authorization header is missing or malformed!'}), 401
+        
+        try:
+            token = token.split(" ")[1]
+            data = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+            # Menyimpan user_id ke objek request
+            request.current_user_id = data['user_id']
+            
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired!'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Token is invalid!'}), 401
+        except Exception as e:
+            logging.error(f"JWT Decoding Error: {e}")
+            return jsonify({'message': 'Invalid token format or server error!'}), 401
+            
+        return f(*args, **kwargs)
+    return decorated
+# --- END SECURITY UTILITY ---
+
+
+# UPLOAD FOLDER
 UPLOAD_FOLDER = os.path.join(app.root_path, 'static', 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -28,21 +85,6 @@ def save_file(file):
     file.save(path)
     return filename
 
-# Try register optional blueprints (non-fatal if missing)
-try:
-    from routes.user_routes import user_bp
-    app.register_blueprint(user_bp, url_prefix="/api/users")
-    logging.info("Registered user_bp at /api/users")
-except Exception as e:
-    logging.info(f"user_bp not registered: {e}")
-
-try:
-    from routes.destinations import destinations_bp
-    app.register_blueprint(destinations_bp, url_prefix="/api")
-    logging.info("Registered destinations_bp at /api")
-except Exception as e:
-    logging.info(f"destinations_bp not registered: {e}")
-
 # Static serving helpers
 @app.route('/assets/<path:filename>')
 def serve_assets(filename):
@@ -52,9 +94,159 @@ def serve_assets(filename):
 def serve_uploads(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+# =========================================================================
+# === START USER ROUTES (BP) ==============================================
+# =========================================================================
+
+# Kita menggunakan objek 'app' langsung, bukan Blueprint, karena ini file tunggal.
+
+# GET /api/users -> list semua user aktif
+@app.route("/api/users", methods=["GET"])
+@token_required 
+def get_users():
+    conn = get_connection()
+    if not conn:
+        return jsonify({"message": "DB connection failed"}), 500
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT user_id, name, email, role, phone, dob, hometown 
+            FROM users 
+            WHERE is_active = 1
+            ORDER BY user_id DESC
+        """)
+        rows = cursor.fetchall()
+        print(f"[GET USERS] Fetched {len(rows)} active users")
+        return jsonify(rows or []), 200
+    except Exception as e:
+        print(f"[GET USERS] Error: {e}")
+        return jsonify({"message": str(e)}), 500
+    finally:
+        if 'cursor' in locals() and cursor: cursor.close()
+        if 'conn' in locals() and conn: conn.close()
+
+# DELETE /api/users/<id> -> soft delete (set is_active = 0)
+@app.route("/api/users/<int:user_id>", methods=["DELETE"])
+@token_required 
+def delete_user(user_id):
+    conn = get_connection()
+    if not conn:
+        return jsonify({"message": "DB connection failed"}), 500
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT user_id, email FROM users WHERE user_id = %s", (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            print(f"[DELETE] User {user_id} not found")
+            return jsonify({"message": "User not found"}), 404
+
+        cursor.execute("UPDATE users SET is_active = 0 WHERE user_id = %s", (user_id,))
+        conn.commit()
+        print(f"[DELETE] Soft-deleted user {user_id} ({row[1]})")
+        
+        return jsonify({"message": "User deleted"}), 200
+    except Exception as e:
+        print(f"[DELETE] Error: {e}")
+        conn.rollback()
+        return jsonify({"message": str(e)}), 500
+    finally:
+        if 'cursor' in locals() and cursor: cursor.close()
+        if 'conn' in locals() and conn: conn.close()
+
+# GET /api/users/profile -> get current user profile
+@app.route("/api/users/profile", methods=["GET"])
+@token_required
+def get_profile():
+    # Ambil ID pengguna yang sudah diverifikasi dari token JWT
+    user_id = request.current_user_id 
+    
+    conn = get_connection()
+    if not conn:
+        return jsonify({"message": "DB connection failed"}), 500
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT user_id, name, email, phone, dob, hometown 
+            FROM users 
+            WHERE user_id = %s AND is_active = 1
+        """, (user_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            return jsonify({"message": "User not found or inactive"}), 404
+            
+        # Normalisasi data
+        name = row.get("name", "")
+        name_parts = name.split(" ")
+        firstName = name_parts[0] if name_parts and name_parts[0] else ""
+        lastName = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+        
+        profile = {
+            "firstName": firstName,
+            "lastName": lastName,
+            "username": name.replace(" ", "").lower() or row["email"].split("@")[0],
+            "email": row["email"],
+            "phone": row.get("phone") or "", 
+            "dob": row.get("dob").strftime('%Y-%m-%d') if row.get("dob") and isinstance(row["dob"], datetime) else row.get("dob") or "",
+            "hometown": row.get("hometown") or "" 
+        }
+        return jsonify(profile), 200
+    except Exception as e:
+        print(f"[GET PROFILE] Error: {e}")
+        return jsonify({"message": "Internal Server Error during profile retrieval. Check database columns."}), 500
+    finally:
+        if 'cursor' in locals() and cursor: cursor.close()
+        if 'conn' in locals() and conn: conn.close()
+
+# PUT /api/users/profile -> update profile
+@app.route("/api/users/profile", methods=["PUT"])
+@token_required
+def update_profile():
+    user_id = request.current_user_id 
+    
+    data = request.get_json()
+    conn = get_connection()
+    if not conn:
+        return jsonify({"message": "DB connection failed"}), 500
+    cursor = conn.cursor()
+    try:
+        name = f"{data.get('firstName', '')} {data.get('lastName', '')}".strip()
+        email = data.get('email', '')
+        phone = data.get('phone', '')
+        dob = data.get('dob', '')
+        hometown = data.get('hometown', '')
+        
+        cursor.execute("""
+            UPDATE users SET 
+            name = %s, 
+            email = %s,
+            phone = %s,
+            dob = %s,
+            hometown = %s
+            WHERE user_id = %s
+        """, (name, email, phone, dob, hometown, user_id))
+        
+        conn.commit()
+        if cursor.rowcount == 0:
+            return jsonify({"message": "User not found or no changes made"}), 200 
+            
+        return jsonify({"message": "Profile updated"}), 200
+    except Exception as e:
+        print(f"[UPDATE PROFILE] Error: {e}")
+        conn.rollback()
+        return jsonify({"message": "Internal Server Error during profile update. Check database columns."}), 500
+    finally:
+        if 'cursor' in locals() and cursor: cursor.close()
+        if 'conn' in locals() and conn: conn.close()
+        
+# =========================================================================
+# === END USER ROUTES / START AR API (CRUD) ===============================
+# =========================================================================
+
+# ... (Semua route API AR, History, dan Auth yang tersisa)
+
 # -----------------------
 # AR API (CRUD)
-# (kept existing endpoints for /api/wisata)
 # -----------------------
 
 @app.route('/api/wisata', methods=['GET'])
@@ -237,19 +429,25 @@ def delete_wisata(id):
 # History API (new)
 # -----------------------
 @app.route('/api/history', methods=['POST'])
+@token_required 
 def add_history():
+    user_id_from_token = request.current_user_id 
+    
     data = request.json or {}
     user_id = data.get('user_id')
-    user_email = data.get('user_email')
+    user_email = data.get('user_email') 
+    
     destination_id = data.get('destination_id')
     action = data.get('action', 'scan_start')
     model_type = data.get('model_type', 'AR')
-    started_at = data.get('started_at')  # ISO string optional
+    started_at = data.get('started_at') 
     ended_at = data.get('ended_at')
     duration_seconds = data.get('duration_seconds')
     metadata = data.get('metadata')
 
-    # Normalize timestamps
+    if not user_id or not destination_id:
+        return jsonify({"message": "user_id dan destination_id diperlukan"}), 400
+
     try:
         if started_at:
             started_str = datetime.fromisoformat(started_at).strftime('%Y-%m-%d %H:%M:%S')
@@ -288,6 +486,7 @@ def add_history():
         return jsonify({"message": str(e)}), 500
 
 @app.route('/api/history', methods=['GET'])
+@token_required 
 def get_all_history():
     conn = get_connection()
     if not conn:
@@ -305,12 +504,16 @@ def get_all_history():
         conn.close()
 
 @app.route('/api/history/user/<int:user_id>', methods=['GET'])
+@token_required 
 def get_history_by_user(user_id):
     conn = get_connection()
     if not conn:
         return jsonify({"message":"DB connection failed"}), 500
     cursor = conn.cursor(dictionary=True)
     try:
+        if request.current_user_id != user_id:
+             return jsonify({'message': 'Akses ditolak: Tidak diizinkan melihat history pengguna lain.'}), 403
+             
         cursor.execute("SELECT h.*, d.name as destination_name FROM history h LEFT JOIN ar_destinations d ON h.destination_id = d.id WHERE h.user_id = %s ORDER BY h.started_at DESC LIMIT 500", (user_id,))
         rows = cursor.fetchall()
         return jsonify(rows), 200
@@ -322,7 +525,7 @@ def get_history_by_user(user_id):
         conn.close()
 
 # -----------------------
-# AUTH routes (unchanged)
+# AUTH routes
 # -----------------------
 @app.route("/api/register", methods=["POST"])
 def register():
@@ -346,6 +549,7 @@ def register():
         if cursor.fetchone():
             return jsonify({"status": "error", "message": "Email sudah terdaftar"}), 400
 
+        # Catatan: Pastikan kolom 'phone', 'dob', 'hometown' memiliki nilai default atau nullable
         cursor.execute("""
             INSERT INTO users (name, email, password, role)
             VALUES (%s, %s, %s, %s)
@@ -383,9 +587,16 @@ def login():
         admin_email = "yogaardian114@student.uns.ac.id"
         role = "admin" if user["email"] == admin_email else user.get("role", "user")
 
+        # Generate JWT token
+        token = jwt.encode({
+            'user_id': user['user_id'],
+            'exp': datetime.utcnow() + TOKEN_LIFESPAN
+        }, SECRET_KEY, algorithm='HS256')
+
         return jsonify({
             "status": "ok",
             "message": "Login berhasil",
+            "token": token,
             "user": {
                 "user_id": user.get("user_id"),
                 "email": user["email"],

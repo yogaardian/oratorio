@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:async'; // Untuk TimeoutException
+import 'dart:async'; 
+import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 
-// Konstanta Warna 
-const Color kPrimary = Color(0xFF004D40);
-const Color kPrimaryDark = Color(0xFF00332A);
-const Color kFooterBg = Color(0xFF121212);
-const Color kFooterText = Color(0xFFA7A7A7);
+// --- Konstanta Warna (Disesuaikan dan Dirapikan) ---
+const Color kColorPrimary = Color(0xFF004D40);
+const Color kColorPrimaryDark = Color(0xFF00332A);
+const Color kColorFooterBg = Color(0xFF121212);
+const Color kColorFooterText = Color(0xFFA7A7A7);
 
-// ⚠️ GANTI INI DENGAN IP KOMPUTER LOKAL KAMU (misalnya 'http://192.168.1.10:5000')
-// Jika menggunakan emulator Android, coba 'http://10.0.2.2:5000'
-// Berdasarkan gambar kamu, IP-mu mungkin:
-const String BASE_URL = 'http://192.168.23.214:5000'; 
+// ⚠️ IP HOST / SERVER FLASK
+const String kBaseUrl = 'http://192.168.1.26:5000'; 
 
 class LoginPage extends StatefulWidget {
     const LoginPage({super.key});
@@ -35,79 +35,134 @@ class _LoginPageState extends State<LoginPage> {
         super.dispose();
     }
 
-    // 🚀 FUNGSI SUBMIT DENGAN PANGGILAN API FLASK (MENGGUNAKAN /api/login)
+    void _showSnackbar(String message, {Color color = Colors.red}) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message), backgroundColor: color),
+        );
+      }
+    }
+
+    // 🚀 FUNGSI SUBMIT DENGAN PERBAIKAN TYPE CAST
     Future<void> _submit() async {
         if (!_formKey.currentState!.validate()) return;
         
         setState(() {
             _loading = true;
-            _message = null;
+            _message = null; 
         });
 
         final String email = _emailCtl.text.trim();
         final String password = _passCtl.text;
         
-        // 1. Siapkan data yang akan dikirim
         final body = json.encode({
             "email": email,
             "password": password,
         });
         
         try {
-            // 2. Kirim Permintaan HTTP POST ke ENDPOINT /api/login (Database)
+            // --- KIRIM PERMINTAAN LOGIN ---
             final response = await http.post(
-                Uri.parse('$BASE_URL/api/login'), // 🎯 PERUBAHAN DI SINI! Menggunakan endpoint DB
+                Uri.parse('$kBaseUrl/api/login'), 
                 headers: {'Content-Type': 'application/json'},
                 body: body,
-            ).timeout(const Duration(seconds: 10)); // Tambahkan timeout untuk penanganan error
+            ).timeout(const Duration(seconds: 10));
 
-            // 3. Proses Respon
-            final Map<String, dynamic> responseData = json.decode(response.body);
+            // DEBUG: Lihat respons mentah
+            print('=== DEBUG LOGIN RESPONSE ===');
+            print('Status Code: ${response.statusCode}');
+            print('Response Body: ${response.body}');
+            
+            // --- PROSES RESPON ---
+            final Map<String, dynamic> responseData = json.decode(response.body) as Map<String, dynamic>;
+            
+            print('Response Data Keys: ${responseData.keys.toList()}');
+            if (responseData.containsKey('token')) {
+                print('Token: ${responseData['token'] != null ? "ADA" : "NULL"}');
+            }
+            if (responseData.containsKey('user')) {
+                final userData = responseData['user'] as Map<String, dynamic>?;
+                print('User Data: $userData');
+                if (userData != null) {
+                    print('User Keys: ${userData.keys.toList()}');
+                    print('Username from server: ${userData['username']}');
+                    print('Email from server: ${userData['email']}');
+                }
+            }
+            print('=== END DEBUG ===');
 
             if (response.statusCode == 200 && responseData['status'] == 'ok') {
                 // ✅ Login Sukses
                 if (!mounted) return;
                 
-                final user = responseData['user']; 
+                // 2. Akses data dengan aman, gunakan null check
+                final String? token = responseData['token'] as String?;
+                final Map<String, dynamic>? user = responseData['user'] as Map<String, dynamic>?;
                 
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content: Text('Login berhasil! Selamat datang, ${user['username']}'),
-                        backgroundColor: kPrimary,
-                    ),
-                );
-                // Navigasi ke Dashboard dan kirim data user
-                Navigator.pushReplacementNamed(context, '/dashboard', arguments: user);
+                if (token == null || user == null) {
+                    throw Exception("Respons sukses, namun Token atau Data User kosong (null).");
+                }
+
+                // PERBAIKAN: Gunakan key yang sesuai dengan response Flask
+                final String? username = user['username'] as String?;  // Flask mengirim 'username'
+                final String? email = user['email'] as String?;
+                final dynamic userId = user['user_id'];  // Bisa int atau String
+                
+                // Handle jika username null
+                final String displayName = username ?? user['email']?.split('@')[0] ?? 'Pengguna';
+
+                // Simpan Token JWT ke SharedPreferences
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('jwt_token', token);
+                
+                // Siapkan data user untuk dikirim ke dashboard
+                final Map<String, dynamic> userData = {
+                    'username': displayName,
+                    'email': email ?? _emailCtl.text.trim(),
+                    'user_id': userId,
+                    'role': user['role'] as String? ?? 'user',
+                };
+
+                _showSnackbar('Login berhasil! Selamat datang, $displayName', color: kColorPrimary);
+                
+                // Navigasi ke Dashboard dan KIRIM DATA USER
+                Navigator.pushReplacementNamed(context, '/dashboard', arguments: userData);
                 
             } else {
-                // ❌ Login Gagal (Status code 401, 400, atau status: error)
-                final errorMessage = responseData['message'] ?? 'Login gagal, coba lagi.';
-                if (mounted) {
-                    setState(() {
-                        _message = errorMessage;
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(errorMessage), backgroundColor: Colors.red),
-                    );
-                }
+                // ❌ Login Gagal
+                // Coba ambil pesan error, jika 'message' null, gunakan fallback.
+                final errorMessage = responseData['message'] as String? ?? 'Otentikasi gagal. Silakan periksa kembali email dan password Anda.';
+                
+                setState(() {
+                    _message = 'Gagal Login (Status ${response.statusCode}): $errorMessage';
+                });
+                _showSnackbar('Gagal Login (Status ${response.statusCode}): $errorMessage', color: Colors.red);
             }
             
         } on TimeoutException {
-             if (mounted) {
-                setState(() {
-                    _message = 'Gagal terhubung: Server lambat atau tidak merespons (Timeout 10s).';
-                });
+            _showSnackbar('Koneksi Gagal: Server lambat atau tidak merespons (Timeout 10s).', color: Colors.orange);
+            setState(() => _message = 'Timeout: Cek koneksi server.');
+
+        } on SocketException catch (e) {
+            String detailMessage;
+            if (e.osError?.errorCode == 111) {
+                detailMessage = 'Koneksi Ditolak (Connection Refused). Server Flask tidak berjalan atau Firewall memblokir Port 5000.';
+            } else {
+                detailMessage = 'Kesalahan jaringan: Periksa koneksi WiFi dan pastikan BASE_URL ($kBaseUrl) sudah benar.';
             }
+            _showSnackbar('Error Jaringan: $detailMessage', color: Colors.red.shade700);
+            setState(() => _message = detailMessage);
+
+        } on FormatException {
+            // Menangkap error JSON decoding jika respons bukan JSON valid
+            _showSnackbar('Error Format: Respons dari server bukan format JSON yang valid. (Cek log server)', color: Colors.purple);
+            setState(() => _message = 'Error Format: Respons server tidak dapat diurai.');
+
         } catch (e) {
-            // ⚠️ Error Jaringan (SocketException)
-            if (mounted) {
-                setState(() {
-                    _message = 'Gagal koneksi. Pastikan Flask Server berjalan di $BASE_URL.';
-                });
-                ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error Jaringan: ${e.runtimeType}'), backgroundColor: Colors.red),
-                );
-            }
+            // Menangkap error lain, termasuk Exception kustom di atas dan TypeError yang tidak spesifik
+            _showSnackbar('Error tidak terduga: ${e.runtimeType}. Coba lagi.', color: Colors.red);
+            setState(() => _message = 'Error: ${e.toString()}');
+             
         } finally {
             if (mounted) setState(() => _loading = false);
         }
@@ -141,10 +196,18 @@ class _LoginPageState extends State<LoginPage> {
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
                                                 const SizedBox(height: 16),
-                                                Text('Masuk dan Mulai Jelajahi Semuanya!', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                                                Text('Masuk dan Mulai Jelajahi Nusantara!',
+                                                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: kColorPrimaryDark)),
                                                 const SizedBox(height: 8),
-                                                Text('Log into your account with your email, or create one below. Quick and easy - promise!', style: Theme.of(context).textTheme.bodyMedium),
+                                                Text('Akses akun Anda menggunakan email dan kata sandi, atau buat akun baru di bawah. Proses yang cepat dan mudah!',
+                                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[700])),
                                                 const SizedBox(height: 20),
+                                                // Tampilkan Pesan Error di UI jika ada
+                                                if (_message != null)
+                                                    Padding(
+                                                        padding: const EdgeInsets.only(bottom: 12.0),
+                                                        child: Text(_message!, style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                                                    ),
                                                 Form(
                                                     key: _formKey,
                                                     child: Column(
@@ -153,13 +216,13 @@ class _LoginPageState extends State<LoginPage> {
                                                                 controller: _emailCtl,
                                                                 keyboardType: TextInputType.emailAddress,
                                                                 decoration: const InputDecoration(
-                                                                    labelText: 'Email',
+                                                                    labelText: 'Email Pengguna',
                                                                     hintText: 'Masukkan email Anda',
                                                                     border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
                                                                 ),
                                                                 validator: (v) {
                                                                     if (v == null || v.trim().isEmpty) return 'Email wajib diisi';
-                                                                    if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(v.trim())) return 'Email tidak valid';
+                                                                    if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(v.trim())) return 'Format email tidak valid';
                                                                     return null;
                                                                 },
                                                             ),
@@ -168,11 +231,11 @@ class _LoginPageState extends State<LoginPage> {
                                                                 controller: _passCtl,
                                                                 obscureText: true,
                                                                 decoration: const InputDecoration(
-                                                                    labelText: 'Password',
-                                                                    hintText: 'Masukkan password Anda',
+                                                                    labelText: 'Kata Sandi',
+                                                                    hintText: 'Masukkan kata sandi Anda',
                                                                     border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
                                                                 ),
-                                                                validator: (v) => (v == null || v.isEmpty) ? 'Password wajib diisi' : null,
+                                                                validator: (v) => (v == null || v.isEmpty) ? 'Kata sandi wajib diisi' : null,
                                                             ),
                                                             const SizedBox(height: 16),
                                                             SizedBox(
@@ -181,98 +244,88 @@ class _LoginPageState extends State<LoginPage> {
                                                                 child: ElevatedButton(
                                                                     onPressed: _loading ? null : _submit,
                                                                     style: ElevatedButton.styleFrom(
-                                                                        backgroundColor: kPrimary,
-                                                                        disabledBackgroundColor: kPrimary.withOpacity(0.6),
+                                                                        backgroundColor: kColorPrimary,
+                                                                        disabledBackgroundColor: kColorPrimary.withOpacity(0.6),
                                                                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                                                         foregroundColor: Colors.white,
                                                                     ),
                                                                     child: _loading 
-                                                                        ? const CircularProgressIndicator(color: Colors.white) 
-                                                                        : const Text('Continue', style: TextStyle(fontWeight: FontWeight.w600)),
+                                                                        ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 3) 
+                                                                        : const Text('Masuk ke Akun', style: TextStyle(fontWeight: FontWeight.w600)),
                                                                 ),
                                                             ),
+                                                            const SizedBox(height: 16),
+                                                            Row(
+                                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                                children: [
+                                                                    TextButton(
+                                                                        onPressed: () => Navigator.pushNamed(context, '/register'), 
+                                                                        child: const Text('Daftar Sekarang', style: TextStyle(color: kColorPrimary)),
+                                                                    ),
+                                                                    TextButton(onPressed: () {}, child: const Text('Lupa Sandi?', style: TextStyle(color: kColorPrimary))),
+                                                                ],
+                                                            ),
+                                                            const SizedBox(height: 12),
+                                                            Row(children: const [
+                                                                Expanded(child: Divider()),
+                                                                SizedBox(width: 8),
+                                                                Text('atau lanjutkan dengan', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                                                SizedBox(width: 8),
+                                                                Expanded(child: Divider()),
+                                                            ]),
+                                                            const SizedBox(height: 12),
+                                                            Row(
+                                                                children: [
+                                                                    Expanded(
+                                                                        child: OutlinedButton(
+                                                                            onPressed: () {},
+                                                                            style: OutlinedButton.styleFrom(
+                                                                                side: const BorderSide(color: Colors.grey),
+                                                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                                                                backgroundColor: Colors.white,
+                                                                            ),
+                                                                            child: const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text('Google', style: TextStyle(color: Colors.black87))),
+                                                                        ),
+                                                                    ),
+                                                                    const SizedBox(width: 12),
+                                                                    Expanded(
+                                                                        child: OutlinedButton(
+                                                                            onPressed: () {},
+                                                                            style: OutlinedButton.styleFrom(
+                                                                                side: const BorderSide(color: Colors.grey),
+                                                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                                                                backgroundColor: Colors.white,
+                                                                            ),
+                                                                            child: const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text('Facebook', style: TextStyle(color: Colors.black87))),
+                                                                        ),
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                            const SizedBox(height: 12),
+                                                            Text.rich(
+                                                                TextSpan(
+                                                                    text: 'Dengan membuat akun, Anda menyetujui ',
+                                                                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                                                    children: [
+                                                                        TextSpan(text: 'Syarat & Ketentuan', style: const TextStyle(color: kColorPrimary)),
+                                                                        const TextSpan(text: ', '),
+                                                                        TextSpan(text: 'Kebijakan Privasi', style: const TextStyle(color: kColorPrimary)),
+                                                                        const TextSpan(text: ' dan Perjanjian dengan Oratorio.'),
+                                                                    ],
+                                                                ),
+                                                            ),
+                                                            const SizedBox(height: 16),
                                                         ],
                                                     ),
                                                 ),
-                                                if (_message != null) ...[
-                                                    const SizedBox(height: 12),
-                                                    Text(_message!, style: const TextStyle(color: Colors.red)),
-                                                ],
-                                                const SizedBox(height: 12),
-                                                Row(
-                                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                    children: [
-                                                        TextButton(
-                                                            onPressed: () => Navigator.pushNamed(context, '/register'), 
-                                                            child: const Text('Register Now', style: TextStyle(color: kPrimary)),
-                                                        ),
-                                                        TextButton(onPressed: () {}, child: const Text('Lupa Sandi?', style: TextStyle(color: kPrimary))),
-                                                    ],
-                                                ),
-                                                const SizedBox(height: 8),
-                                                Row(children: const [
-                                                    Expanded(child: Divider()),
-                                                    SizedBox(width: 8),
-                                                    Text('or continue with', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                                    SizedBox(width: 8),
-                                                    Expanded(child: Divider()),
-                                                ]),
-                                                const SizedBox(height: 12),
-                                                Row(
-                                                    children: [
-                                                        Expanded(
-                                                            child: OutlinedButton(
-                                                                onPressed: () {},
-                                                                style: OutlinedButton.styleFrom(
-                                                                    side: const BorderSide(color: Colors.grey),
-                                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                                                    backgroundColor: Colors.white,
-                                                                ),
-                                                                child: const Padding(
-                                                                    padding: EdgeInsets.symmetric(vertical: 12),
-                                                                    child: Text('Google'),
-                                                                ),
-                                                            ),
-                                                        ),
-                                                        const SizedBox(width: 12),
-                                                        Expanded(
-                                                            child: OutlinedButton(
-                                                                onPressed: () {},
-                                                                style: OutlinedButton.styleFrom(
-                                                                    side: const BorderSide(color: Colors.grey),
-                                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                                                    backgroundColor: Colors.white,
-                                                                ),
-                                                                child: const Padding(
-                                                                    padding: EdgeInsets.symmetric(vertical: 12),
-                                                                    child: Text('Facebook'),
-                                                                ),
-                                                            ),
-                                                        ),
-                                                    ],
-                                                ),
-                                                const SizedBox(height: 12),
-                                                Text.rich(
-                                                    TextSpan(
-                                                        text: 'By creating an account, you agree to our ',
-                                                        style: const TextStyle(fontSize: 12, color: Colors.grey),
-                                                        children: [
-                                                            TextSpan(text: 'Terms & Conditions', style: const TextStyle(color: kPrimary)),
-                                                            const TextSpan(text: ', '),
-                                                            TextSpan(text: 'Privacy Policy', style: const TextStyle(color: kPrimary)),
-                                                            const TextSpan(text: ' and Agreement with Oratorio.'),
-                                                        ],
-                                                    ),
-                                                ),
-                                                const SizedBox(height: 16),
                                             ],
                                         ),
                                     ),
-                                    // Footer inside card
+                                    // Footer di dalam Card
                                     Container(
                                         width: double.infinity,
                                         decoration: const BoxDecoration(
-                                            color: kFooterBg,
+                                            color: kColorFooterBg,
                                             borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
                                         ),
                                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
@@ -293,13 +346,13 @@ class _LoginPageState extends State<LoginPage> {
                                                     alignment: WrapAlignment.center,
                                                     spacing: 24,
                                                     children: [
-                                                        TextButton(onPressed: () {}, child: const Text('Help Center', style: TextStyle(color: kFooterText))),
-                                                        TextButton(onPressed: () {}, child: const Text('FAQ', style: TextStyle(color: kFooterText))),
-                                                        TextButton(onPressed: () {}, child: const Text('About Oratorio', style: TextStyle(color: kFooterText))),
+                                                        TextButton(onPressed: () {}, child: const Text('Pusat Bantuan', style: TextStyle(color: kColorFooterText))),
+                                                        TextButton(onPressed: () {}, child: const Text('FAQ', style: TextStyle(color: kColorFooterText))),
+                                                        TextButton(onPressed: () {}, child: const Text('Tentang Oratorio', style: TextStyle(color: kColorFooterText))),
                                                     ],
                                                 ),
                                                 const SizedBox(height: 12),
-                                                Text('© 2025 Oratorio, Inc.', style: const TextStyle(color: kFooterText, fontSize: 12)),
+                                                const Text('© 2025 Oratorio, Inc. | Semua Hak Cipta Dilindungi.', style: TextStyle(color: kColorFooterText, fontSize: 12)),
                                             ],
                                         ),
                                     ),

@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
-import 'widget.dart';
+import 'widget.dart'; // Mengandung CustomBottomNavBar
+import 'profile.dart'; // Import ProfilePage
+import 'ARGalleryPage.dart'; // Import ARGalleryPage
+import 'ScanARPage.dart'; // Import ScanARPage
+import 'history.dart'; // 🎯 PENTING: Import HistoryPage
 
-// Konstanta Warna (Ambil dari login.dart untuk konsistensi)
+// --- Konstanta Warna (Ambil dari login.dart untuk konsistensi) ---
 const Color kPrimary = Color(0xFF004D40);
 const Color kFooterText = Color(0xFFA7A7A7);
 const Color kFooterBg = Color(0xFF121212);
@@ -27,8 +31,8 @@ final List<Map<String, dynamic>> destinationsData = [
 final List<Map<String, dynamic>> vrDestinations = [
   {'slug': 'candi-borobudur', 'image': assetBorobudur, 'title': 'Candi Borobudur', 'location': 'Magelang, Jawa Tengah'},
   {'slug': 'monumen-nasional', 'image': assetMonas, 'title': 'Monumen Nasional', 'location': 'Jakarta, DKI Jakarta'},
-  {'slug': 'tugu-jogja', 'image': assetTugu, 'title': 'Tugu Jogjakarya', 'location': 'D.I.Yogyakarta'},
-  {'slug': 'jam-gadang', 'image': assetGadang, 'title': 'Jam Gadang', 'location': 'Bukit Tinggi, Sumatera'},
+  {'slug': 'tugu-jogja', 'image': assetTugu, 'title': 'Tugu Jogjakarta', 'location': 'D.I.Yogyakarta'},
+  {'slug': 'jam-gadang', 'image': assetGadang, 'title': 'Jam Gadang', 'location': 'Bukit Tinggi, Sumatera Barat'},
 ];
 
 // --- Dashboard Component Widgets ---
@@ -43,52 +47,109 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   int _selectedIndex = 0;
 
+  // Variabel untuk menyimpan data pengguna yang sedang login
+  Map<String, dynamic>? _currentProfileData;
+
+  // 🎯 Daftar Halaman (Dibuat dinamis agar bisa meneruskan data pengguna)
+  List<Widget> _pageOptions(Map<String, dynamic>? userData) => <Widget>[
+    // Index 0: Home
+    const _DashboardContent(),
+
+    // Index 1: Gallery
+    const ARGalleryPage(),
+
+    // Index 2: ScanARPage (Hanya placeholder, navigasi diatur di _onNavBarItemTapped)
+    const ScanARPage(),
+
+    // Index 3: History (Meneruskan data pengguna)
+    HistoryPage(userData: userData),
+
+    // Index 4: Profile (Meneruskan data pengguna)
+    ProfilePage(userData: userData),
+  ];
+
   void _onNavBarItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-    // Navigasi berdasarkan index
-    if (index == 1) {
-      // buka AR Gallery
-      Navigator.pushNamed(context, '/argallery');
-    } else if (index == 2) {
-      // buka Scan (kamera)
-      Navigator.pushNamed(context, '/scan');
-    } else if (index == 0) {
-      // tetap di dashboard
+    if (index == 2) {
+      // Tombol Kamera Tengah: Navigasi ke /scan dan KIRIM DATA PENGGUNA
+      // ScanARPage akan mengambil userData dari arguments ini.
+      // Saat dipicu dari tombol tengah, tidak ada destinationId yang spesifik.
+      Navigator.pushNamed(context, '/scan', arguments: _currentProfileData);
+    } else {
+      setState(() {
+        _selectedIndex = index;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Mengambil data user yang dikirim dari Login
-    final Map<String, dynamic>? userData = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-    final String username = userData?['username'] ?? 'Pengguna';
+    // Mengambil data user yang dikirim dari Login saat pertama kali build
+    final Map<String, dynamic>? argumentsData = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
 
-    return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          // Header / AppBar
-          _CustomHeader(username: username), // Kirim username ke Header
-          
-          SliverList(
-            delegate: SliverChildListDelegate(
-              [
-                _HeroSection(username: username), // Kirim username ke Hero Section
-                const _FavoriteDestinationsSection(),
-                const _ARTorioSection(),
-                const _VRTorioSection(),
-                const _FooterSection(),
-              ],
+    // Jika data dari arguments baru ada, simpan ke state
+
+    if (argumentsData != null && _currentProfileData == null) {
+
+        _currentProfileData = argumentsData;
+
+    }
+
+    final String username = _currentProfileData?['username'] ?? 'Pengguna';
+
+    // Ambil daftar halaman dengan data pengguna
+    final List<Widget> pageOptionsWithData = _pageOptions(_currentProfileData);
+    Widget currentBody = pageOptionsWithData.elementAt(_selectedIndex);
+
+    // Jika index 0 (Home)
+
+    if (_selectedIndex == 0) {
+      return Scaffold(
+        body: CustomScrollView(
+          slivers: [
+            // Header / AppBar
+            _CustomHeader(username: username),
+
+            // Konten Home Scrollable
+
+            SliverList(
+              delegate: SliverChildListDelegate(
+                [
+                  _HeroSection(username: username), // Kirim username
+                  const _FavoriteDestinationsSection(),
+                  const _ARTorioSection(),
+                  const _VRTorioSection(),
+                  const _FooterSection(),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
+        bottomNavigationBar: CustomBottomNavBar(
+          selectedIndex: _selectedIndex,
+          onItemTapped: _onNavBarItemTapped,
+        ),
+      );
+    }
+
+    // Untuk Index 1, 3, dan 4 (Gallery, History, Profile)
+    return Scaffold(
+      body: currentBody, // Menampilkan ProfilePage, HistoryPage, dll. dengan data user
       bottomNavigationBar: CustomBottomNavBar(
         selectedIndex: _selectedIndex,
         onItemTapped: _onNavBarItemTapped,
       ),
     );
+  }
+}
+
+// --- WIDGET BAWAAN (tanpa perubahan, disingkat untuk fokus) ---
+
+class _DashboardContent extends StatelessWidget {
+  const _DashboardContent({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(children: [],);
   }
 }
 
@@ -105,7 +166,7 @@ class _CustomHeader extends StatelessWidget {
       foregroundColor: kPrimary,
       elevation: 4.0,
       title: Text(
-        'Hi, $username!', 
+        'Hi, $username!',
         style: const TextStyle(
           fontWeight: FontWeight.bold,
           letterSpacing: 1.0,
@@ -149,7 +210,6 @@ class _HeroSection extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // ➡️ PERBAIKAN: Mengurangi ukuran dan ketebalan font sapaan
               const SizedBox(height: 12),
               const Text(
                 'Jelajahi Bersama Oratorio. Hidupkan Kembali Sejarah. Jelajahi Budaya Indonesia di Mana Saja.',
@@ -197,7 +257,7 @@ class _DestinationCard extends StatelessWidget {
             Image.asset(
               imageSrc,
               fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => 
+              errorBuilder: (context, error, stackTrace) =>
                 const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
             ),
             Container(
@@ -232,6 +292,7 @@ class _FavoriteDestinationsSection extends StatelessWidget {
   const _FavoriteDestinationsSection();
 
   @override
+
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 40, bottom: 40, left: 16, right: 16),
@@ -305,6 +366,8 @@ class _ARTorioSection extends StatelessWidget {
                 ElevatedButton.icon(
                   onPressed: () {
                     // Logika navigasi ke AR Gallery
+                    // Menggunakan pushNamed seperti sebelumnya:
+                    Navigator.pushNamed(context, '/argallery');
                   },
                   icon: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
                   label: const Text('Lihat Semua Koleksi'),
@@ -327,7 +390,7 @@ class _ARTorioSection extends StatelessWidget {
 class _SectionTitle extends StatelessWidget {
   final String title;
   final Color color;
-  
+
   const _SectionTitle({required this.title, required this.color});
 
   @override
@@ -386,14 +449,14 @@ class _VRTorioSection extends StatelessWidget {
                     Expanded(
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: 
+                        child:
                           Image.asset(
-                            item['image'] as String,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            errorBuilder: (context, error, stackTrace) => 
-                              const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
-                          ),
+                              item['image'] as String,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              errorBuilder: (context, error, stackTrace) =>
+                                const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+                            ),
                       ),
                     ),
                     Padding(
@@ -434,12 +497,12 @@ class _FooterSection extends StatelessWidget {
             children: [
               IconButton(onPressed: () {}, icon: const Icon(Icons.facebook, color: Colors.white, size: 28)),
               IconButton(onPressed: () {}, icon: const Icon(Icons.share, color: Colors.white, size: 28)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.videocam, color: Colors.white, size: 28)), 
-              IconButton(onPressed: () {}, icon: const Icon(Icons.photo_camera, color: Colors.white, size: 28)), 
+              IconButton(onPressed: () {}, icon: const Icon(Icons.videocam, color: Colors.white, size: 28)),
+              IconButton(onPressed: () {}, icon: const Icon(Icons.photo_camera, color: Colors.white, size: 28)),
             ],
           ),
           const SizedBox(height: 32),
-          
+        
           // Footer Links (Dibuat vertikal untuk mobile)
           const _FooterLink(text: 'Help Center'),
           const _FooterLink(text: 'FAQ'),
@@ -449,11 +512,12 @@ class _FooterSection extends StatelessWidget {
           const _FooterLink(text: 'Virtual Reality Interface'),
           const _FooterLink(text: 'Kebijakan Privasi'),
           const _FooterLink(text: 'Syarat & Ketentuan'),
-          
+         
           const SizedBox(height: 24),
           const Divider(color: Colors.grey, height: 1),
           const SizedBox(height: 16),
-          
+
+        
           // Copyright
           const Text(
             '© 2025 Oratorio, Inc.',
@@ -467,7 +531,6 @@ class _FooterSection extends StatelessWidget {
 
 class _FooterLink extends StatelessWidget {
   final String text;
-
   const _FooterLink({required this.text});
 
   @override

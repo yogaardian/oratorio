@@ -1,159 +1,199 @@
-import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
-import 'dart:io' show Platform;
+import 'dart:convert';
+import 'dart:async';
 
-String resolveApiBaseScan(String configured) {
-  if (Platform.isAndroid) {
-    if (configured.contains('localhost') || configured.contains('127.0.0.1')) {
-      return 'http://10.0.2.2:5000';
-    }
-  }
-  return configured;
+// Konstanta Warna (Ambil dari dashboard.dart)
+const Color kPrimary = Color(0xFF004D40);
+// ⚠️ GANTI IP INI DENGAN IP FLASK ANDA YANG AKTIF (misalnya: 192.168.1.26:5000)
+// Karena log terakhir Anda menunjukkan IP 192.168.1.26
+const String BASE_URL = 'http://192.168.1.26:5000'; 
+
+// Model Data untuk menerima argumen dari Gallery/Dashboard
+class ScanArguments {
+  final int? destinationId;
+  final String? destinationName;
+  final Map<String, dynamic>? userData;
+
+  ScanArguments({this.destinationId, this.destinationName, this.userData});
 }
 
 class ScanARPage extends StatefulWidget {
   const ScanARPage({super.key});
 
   @override
-  State<ScanARPage> createState() => _ScanARPageState();
+  _ScanARPageState createState() => _ScanARPageState();
 }
 
 class _ScanARPageState extends State<ScanARPage> {
-  CameraController? _controller;
-  List<CameraDescription>? _cameras;
-  bool _isInitialized = false;
-  bool _scanning = false;
-  DateTime? _scanStart;
-  final String apiBase = resolveApiBaseScan('http://192.168.23.214:5000');
+  String _scanStatus = 'Tekan "Mulai Pindai" untuk mengaktifkan kamera.';
+  bool _isScanning = false;
+  
+  // Data pengguna yang sedang login (disediakan oleh Dashboard)
+  Map<String, dynamic>? _userData;
+  
+  // Data Scan yang berhasil (ID dan Nama Destinasi - untuk simulasi)
+  int? _scannedDestinationId;
+  String? _scannedDestinationName;
 
   @override
-  void initState() {
-    super.initState();
-    _initCamera();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Mengambil data pengguna dari arguments yang dikirim Dashboard atau Gallery
+    final args = ModalRoute.of(context)?.settings.arguments;
+    
+    if (args is Map<String, dynamic>) {
+      // Pemicu dari Tombol Kamera Tengah (hanya membawa Map userData)
+      _userData = args;
+      _scannedDestinationId = null; 
+      _scannedDestinationName = null;
+    } else if (args is ScanArguments) {
+      // Pemicu dari Gallery (membawa info destinasi)
+      _userData = args.userData;
+      _scannedDestinationId = args.destinationId;
+      _scannedDestinationName = args.destinationName;
+    } 
   }
 
-  Future<void> _initCamera() async {
-    try {
-      _cameras = await availableCameras();
-      if (_cameras != null && _cameras!.isNotEmpty) {
-        _controller = CameraController(_cameras!.first, ResolutionPreset.medium, enableAudio: false);
-        await _controller!.initialize();
-        setState(() { _isInitialized = true; });
-      }
-    } catch (e) {
-      // If initialization fails (likely due to missing permission), show guidance
-      if (mounted) {
-        showDialog(context: context, builder: (_) => AlertDialog(
-          title: const Text('Camera Unavailable'),
-          content: const Text('Camera could not be initialized. Please ensure the app has camera permission in system settings.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
-          ],
-        ));
-      }
+  // 1. FUNGSI UNTUK MENCATAT HISTORY KE FLASK (Action: scan_success)
+  // Ini adalah pengganti logika scan_start/scan_end yang ada di ScanARPage.jsx
+  Future<void> _recordScanSuccess(int destinationId, String destinationName) async {
+    final int? userId = _userData?['user_id'] as int?;
+    final String? userEmail = _userData?['email'] as String?;
+
+    if (userId == null || userEmail == null || userId == 0) {
+      setState(() {
+        _scanStatus = 'Error: Data pengguna tidak valid. History gagal dicatat.';
+      });
+      return;
     }
-  }
-
-  Future<void> _captureAndRecognize(Map<String, dynamic>? args) async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    if (_scanning) return;
-    setState(() { _scanning = true; });
-
-    final start = DateTime.now();
-    final XFile file = await _controller!.takePicture();
-    final uri = Uri.parse('$apiBase/api/recognize');
 
     try {
-      final req = http.MultipartRequest('POST', uri);
-      req.files.add(await http.MultipartFile.fromPath('image', file.path));
-      // optionally send expected destination id passed from args
-      if (args != null && args['id'] != null) req.fields['expected_id'] = args['id'].toString();
-      final streamed = await req.send();
-      final resp = await http.Response.fromStream(streamed);
-      if (resp.statusCode == 200) {
-        final Map<String, dynamic> body = json.decode(resp.body) as Map<String, dynamic>;
-        final matched = body['matched'] == true;
-        final destinationId = body['destination_id'] ?? args?['id'];
-        final end = DateTime.now();
-        final duration = end.difference(start).inSeconds;
-
-        // post history -> scan_end
-        await http.post(Uri.parse('$apiBase/api/history'),
+      final response = await http.post(
+          Uri.parse('$BASE_URL/api/history'),
           headers: {'Content-Type': 'application/json'},
           body: json.encode({
-            'destination_id': destinationId,
-            'action': matched ? 'scan_end' : 'scan_failed',
-            'started_at': start.toUtc().toIso8601String(),
-            'ended_at': end.toUtc().toIso8601String(),
-            'duration_seconds': duration,
+              "user_id": userId,
+              "user_email": userEmail,
+              "destination_id": destinationId,
+              "action": "scan_success", // 🎯 History dicatat saat sukses scan
+              "model_type": "AR",
           }),
-        );
+      );
 
-        if (matched) {
-          if (!mounted) return;
-          showDialog(context: context, builder: (_) => AlertDialog(title: const Text('Berhasil'), content: const Text('Marker terdeteksi!'), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]));
-        } else {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Marker tidak terdeteksi')));
-        }
+      if (response.statusCode == 201) {
+          setState(() {
+            _scanStatus = 'Scan sukses: $destinationName. Riwayat berhasil dicatat!';
+          });
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gagal menghubungi server')));
+          final apiMessage = json.decode(response.body)['message'] ?? 'API error';
+          setState(() {
+            _scanStatus = 'Gagal mencatat riwayat. Pesan API: $apiMessage';
+          });
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error saat scanning')));
-    } finally {
-      setState(() { _scanning = false; });
+      setState(() {
+        _scanStatus = 'Error jaringan saat mencatat riwayat. $e';
+      });
     }
   }
 
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
+  // 2. LOGIKA SIMULASI PEMINDAIAN (GENERAL ATAU SPESIFIK)
+  void _startScanning() {
+    if (_userData == null) {
+      setState(() {
+        _scanStatus = 'Error: Harap login untuk memulai pemindaian.';
+      });
+      return;
+    }
+    
+    setState(() {
+        _isScanning = true;
+    });
 
+    // Simulasi: 3 detik untuk menemukan marker
+    Future.delayed(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      
+      // Kasus A: Dipicu dari Gallery (Spesifik)
+      if (_scannedDestinationId != null && _scannedDestinationName != null) {
+        _recordScanSuccess(_scannedDestinationId!, _scannedDestinationName!);
+      } else {
+        // Kasus B: Dipicu dari Tombol Tengah (General Scan)
+        // Simulasi berhasil menemukan marker default (ID 5, Candi Borobudur)
+        const int generalScanId = 5; 
+        const String generalScanName = 'Candi Borobudur';
+        _recordScanSuccess(generalScanId, generalScanName);
+      }
+      
+      setState(() {
+          _isScanning = false;
+      });
+    });
+
+    setState(() {
+        _scanStatus = (_scannedDestinationName != null) 
+            ? 'Memindai marker spesifik: $_scannedDestinationName...'
+            : 'Memindai marker umum (mode General Scan)...';
+    });
+  }
+  
   @override
   Widget build(BuildContext context) {
-    final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
     return Scaffold(
-      appBar: AppBar(title: Text(args?['name'] ?? 'Scan AR'), backgroundColor: const Color(0xFF005954)),
-      body: Column(
-        children: [
-          Expanded(
-            child: _isInitialized && _controller != null
-                ? CameraPreview(_controller!)
-                : const Center(child: Text('Camera not available')),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _scanning ? null : () async {
-                      // when opening page we can send scan_start to history
-                      final start = DateTime.now();
-                      try {
-                        await http.post(Uri.parse('$apiBase/api/history'), headers: {'Content-Type':'application/json'}, body: json.encode({
-                          'destination_id': args?['id'],
-                          'action': 'scan_start',
-                          'started_at': start.toUtc().toIso8601String(),
-                        }));
-                      } catch (_) {}
-                      await _captureAndRecognize(args);
-                    },
-                    icon: const Icon(Icons.camera_alt),
-                    label: Text(_scanning ? 'Scanning...' : 'Scan Marker'),
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF005954)),
+      appBar: AppBar(
+        title: const Text('Scan AR', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: kPrimary,
+        foregroundColor: Colors.white,
+      ),
+      body: Center(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Konten Simulasi Kamera
+              Container(
+                width: 300,
+                height: 400,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Icon(Icons.camera_alt, color: Colors.white70, size: 80),
+              ),
+              
+              const SizedBox(height: 30),
+              
+              // Tampilan Status Scan
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40),
+                child: Text(
+                  _scanStatus,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: _scanStatus.contains('Error') ? Colors.red : kPrimary,
                   ),
                 ),
-              ],
-            ),
+              ),
+              
+              const SizedBox(height: 20),
+
+              // Tombol Mulai/Scanning
+              _isScanning
+                  ? const CircularProgressIndicator(color: kPrimary)
+                  : ElevatedButton.icon(
+                      onPressed: _startScanning,
+                      icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
+                      label: const Text('Mulai Pindai Marker', style: TextStyle(color: Colors.white)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kPrimary,
+                        padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 15),
+                      ),
+                    ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

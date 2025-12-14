@@ -6,10 +6,14 @@ const ARGalleryPage = () => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const BACKEND_PORT = "5000";
+  const LOCAL_API_URL = `http://localhost:${BACKEND_PORT}`;
+  const IMAGE_BASE_URL = `http://localhost:${BACKEND_PORT}`;
+
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    axios.get('http://192.168.23.214:5000/api/wisata')
+    axios.get(`${LOCAL_API_URL}/api/wisata`)
       .then(response => {
         if (mounted) {
           setItems(response.data || []);
@@ -145,7 +149,7 @@ const ARGalleryPage = () => {
                   {/* Image Section */}
                   <div className="relative h-56 bg-gradient-to-br from-[#C9E4E2] to-[#005954] overflow-hidden">
                     <img
-                      src={`http://192.168.23.214:5000/static/uploads/${item.marker_image}`}
+                      src={`${IMAGE_BASE_URL}/static/uploads/${item.marker_image}`}
                       alt={item.name}
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                       onError={(e) => { e.target.src = "https://via.placeholder.com/400x300?text=No+Image"; }}
@@ -198,7 +202,7 @@ const ARGalleryPage = () => {
                       className="block w-full"
                       onClick={async () => {
                         try {
-                          await fetch('http://192.168.23.214:5000/api/history', {
+                          await fetch('http://192.168.1.26:5000/api/history', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
