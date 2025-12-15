@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'widget.dart'; // Mengandung CustomBottomNavBar
 import 'profile.dart'; // Import ProfilePage
 import 'ARGalleryPage.dart'; // Import ARGalleryPage
 import 'ScanARPage.dart'; // Import ScanARPage
-import 'history.dart'; // 🎯 PENTING: Import HistoryPage
+import 'history.dart'; // Import HistoryPage
 
-// --- Konstanta Warna (Ambil dari login.dart untuk konsistensi) ---
+// --- Konstanta Warna ---
 const Color kPrimary = Color(0xFF004D40);
 const Color kFooterText = Color(0xFFA7A7A7);
 const Color kFooterBg = Color(0xFF121212);
@@ -46,34 +47,119 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   int _selectedIndex = 0;
-
-  // Variabel untuk menyimpan data pengguna yang sedang login
   Map<String, dynamic>? _currentProfileData;
+  bool _isLoading = true;
 
-  // 🎯 Daftar Halaman (Dibuat dinamis agar bisa meneruskan data pengguna)
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  // Fungsi untuk memuat data pengguna dari SharedPreferences
+  Future<void> _loadUserData() async {
+    print('🔄 Dashboard: Loading user data from SharedPreferences...');
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      final userId = prefs.getInt('user_id');
+      final email = prefs.getString('email');
+      final username = prefs.getString('username');
+      final jwtToken = prefs.getString('jwt_token');
+      
+      print('📊 Dashboard SharedPreferences:');
+      print('   user_id: $userId');
+      print('   email: $email');
+      print('   username: $username');
+      print('   jwt_token: $jwtToken');
+      
+      if (userId != null && email != null) {
+        setState(() {
+          _currentProfileData = {
+            'user_id': userId,
+            'email': email,
+            'username': username ?? 'Pengguna',
+            'jwt_token': jwtToken,
+          };
+          _isLoading = false;
+        });
+        print('✅ Dashboard: User data loaded successfully');
+      } else {
+        // Jika tidak ada data di SharedPreferences, coba ambil dari arguments
+        _loadFromArguments();
+      }
+    } catch (e) {
+      print('❌ Dashboard: Error loading from SharedPreferences: $e');
+      _loadFromArguments();
+    }
+  }
+
+  void _loadFromArguments() {
+    final argumentsData = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    
+    if (argumentsData != null && _currentProfileData == null) {
+      print('📱 Dashboard: Loading from arguments: $argumentsData');
+      
+      setState(() {
+        _currentProfileData = argumentsData;
+        _isLoading = false;
+      });
+      
+      // Simpan ke SharedPreferences untuk penggunaan selanjutnya
+      _saveToSharedPreferences(argumentsData);
+    } else {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _saveToSharedPreferences(Map<String, dynamic> userData) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('user_id', userData['user_id'] as int);
+      await prefs.setString('email', userData['email'] as String);
+      await prefs.setString('username', userData['username'] as String);
+      if (userData['jwt_token'] != null) {
+        await prefs.setString('jwt_token', userData['jwt_token'] as String);
+      }
+      print('💾 Dashboard: User data saved to SharedPreferences');
+    } catch (e) {
+      print('❌ Dashboard: Error saving to SharedPreferences: $e');
+    }
+  }
+
   List<Widget> _pageOptions(Map<String, dynamic>? userData) => <Widget>[
-    // Index 0: Home
     const _DashboardContent(),
-
-    // Index 1: Gallery
     const ARGalleryPage(),
-
-    // Index 2: ScanARPage (Hanya placeholder, navigasi diatur di _onNavBarItemTapped)
     const ScanARPage(),
-
-    // Index 3: History (Meneruskan data pengguna)
     HistoryPage(userData: userData),
-
-    // Index 4: Profile (Meneruskan data pengguna)
     ProfilePage(userData: userData),
   ];
 
   void _onNavBarItemTapped(int index) {
+    print('🎯 Dashboard: NavBar tapped index $index');
+    print('🎯 Dashboard: Current userData: $_currentProfileData');
+    
     if (index == 2) {
-      // Tombol Kamera Tengah: Navigasi ke /scan dan KIRIM DATA PENGGUNA
-      // ScanARPage akan mengambil userData dari arguments ini.
-      // Saat dipicu dari tombol tengah, tidak ada destinationId yang spesifik.
-      Navigator.pushNamed(context, '/scan', arguments: _currentProfileData);
+      // Tombol Kamera Tengah
+      if (_currentProfileData != null) {
+        print('📸 Dashboard: Navigating to scan with userData');
+        Navigator.pushNamed(
+          context, 
+          '/scan', 
+          arguments: _currentProfileData
+        );
+      } else {
+        print('⚠️ Dashboard: No userData available, showing error');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Silakan login terlebih dahulu'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } else {
       setState(() {
         _selectedIndex = index;
@@ -83,38 +169,27 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Mengambil data user yang dikirim dari Login saat pertama kali build
-    final Map<String, dynamic>? argumentsData = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-
-    // Jika data dari arguments baru ada, simpan ke state
-
-    if (argumentsData != null && _currentProfileData == null) {
-
-        _currentProfileData = argumentsData;
-
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: kPrimary),
+        ),
+      );
     }
 
     final String username = _currentProfileData?['username'] ?? 'Pengguna';
-
-    // Ambil daftar halaman dengan data pengguna
     final List<Widget> pageOptionsWithData = _pageOptions(_currentProfileData);
     Widget currentBody = pageOptionsWithData.elementAt(_selectedIndex);
-
-    // Jika index 0 (Home)
 
     if (_selectedIndex == 0) {
       return Scaffold(
         body: CustomScrollView(
           slivers: [
-            // Header / AppBar
             _CustomHeader(username: username),
-
-            // Konten Home Scrollable
-
             SliverList(
               delegate: SliverChildListDelegate(
                 [
-                  _HeroSection(username: username), // Kirim username
+                  _HeroSection(username: username),
                   const _FavoriteDestinationsSection(),
                   const _ARTorioSection(),
                   const _VRTorioSection(),
@@ -131,9 +206,8 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
 
-    // Untuk Index 1, 3, dan 4 (Gallery, History, Profile)
     return Scaffold(
-      body: currentBody, // Menampilkan ProfilePage, HistoryPage, dll. dengan data user
+      body: currentBody,
       bottomNavigationBar: CustomBottomNavBar(
         selectedIndex: _selectedIndex,
         onItemTapped: _onNavBarItemTapped,
@@ -142,7 +216,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-// --- WIDGET BAWAAN (tanpa perubahan, disingkat untuk fokus) ---
+// --- Widget Bawaan (Sama seperti sebelumnya, disingkat) ---
 
 class _DashboardContent extends StatelessWidget {
   const _DashboardContent({super.key});
@@ -178,8 +252,16 @@ class _CustomHeader extends StatelessWidget {
         IconButton(
           icon: const Icon(Icons.logout),
           tooltip: 'Logout',
-          onPressed: () {
-            Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+          onPressed: () async {
+            // Clear SharedPreferences saat logout
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.clear();
+            
+            Navigator.pushNamedAndRemoveUntil(
+              context, 
+              '/login', 
+              (route) => false
+            );
           },
         ),
       ],
@@ -201,7 +283,10 @@ class _HeroSection extends StatelessWidget {
         image: DecorationImage(
           image: const AssetImage(assetHero),
           fit: BoxFit.cover,
-          colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.5), BlendMode.darken),
+          colorFilter: ColorFilter.mode(
+            Colors.black.withOpacity(0.5), 
+            BlendMode.darken
+          ),
         ),
       ),
       child: Center(
@@ -292,7 +377,6 @@ class _FavoriteDestinationsSection extends StatelessWidget {
   const _FavoriteDestinationsSection();
 
   @override
-
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 40, bottom: 40, left: 16, right: 16),
@@ -313,10 +397,10 @@ class _FavoriteDestinationsSection extends StatelessWidget {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2, // 2 kolom untuk mobile
+              crossAxisCount: 2,
               crossAxisSpacing: 16.0,
               mainAxisSpacing: 16.0,
-              childAspectRatio: 0.9, // sedikit lebih tinggi dari lebar
+              childAspectRatio: 0.9,
             ),
             itemCount: destinationsData.length,
             itemBuilder: (context, index) {
@@ -365,8 +449,6 @@ class _ARTorioSection extends StatelessWidget {
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
                   onPressed: () {
-                    // Logika navigasi ke AR Gallery
-                    // Menggunakan pushNamed seperti sebelumnya:
                     Navigator.pushNamed(context, '/argallery');
                   },
                   icon: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
@@ -375,7 +457,9 @@ class _ARTorioSection extends StatelessWidget {
                     backgroundColor: kPrimary,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)
+                    ),
                   ),
                 ),
               ],
@@ -431,32 +515,31 @@ class _VRTorioSection extends StatelessWidget {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2, // 2 kolom untuk mobile
+              crossAxisCount: 2,
               crossAxisSpacing: 16.0,
               mainAxisSpacing: 16.0,
-              childAspectRatio: 0.8, // Menyesuaikan dengan konten kartu
+              childAspectRatio: 0.8,
             ),
             itemCount: vrDestinations.length,
             itemBuilder: (context, index) {
               final item = vrDestinations[index];
               return InkWell(
-                onTap: () {
-                  // Navigasi ke VR detail page
-                },
+                onTap: () {},
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child:
-                          Image.asset(
-                              item['image'] as String,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              errorBuilder: (context, error, stackTrace) =>
-                                const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+                        child: Image.asset(
+                          item['image'] as String,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          errorBuilder: (context, error, stackTrace) =>
+                            const Center(
+                              child: Icon(Icons.broken_image, color: Colors.grey)
                             ),
+                        ),
                       ),
                     ),
                     Padding(
@@ -491,19 +574,28 @@ class _FooterSection extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 40.0, horizontal: 24.0),
       child: Column(
         children: [
-          // Social Icons
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              IconButton(onPressed: () {}, icon: const Icon(Icons.facebook, color: Colors.white, size: 28)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.share, color: Colors.white, size: 28)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.videocam, color: Colors.white, size: 28)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.photo_camera, color: Colors.white, size: 28)),
+              IconButton(
+                onPressed: () {}, 
+                icon: const Icon(Icons.facebook, color: Colors.white, size: 28)
+              ),
+              IconButton(
+                onPressed: () {}, 
+                icon: const Icon(Icons.share, color: Colors.white, size: 28)
+              ),
+              IconButton(
+                onPressed: () {}, 
+                icon: const Icon(Icons.videocam, color: Colors.white, size: 28)
+              ),
+              IconButton(
+                onPressed: () {}, 
+                icon: const Icon(Icons.photo_camera, color: Colors.white, size: 28)
+              ),
             ],
           ),
           const SizedBox(height: 32),
-        
-          // Footer Links (Dibuat vertikal untuk mobile)
           const _FooterLink(text: 'Help Center'),
           const _FooterLink(text: 'FAQ'),
           const _FooterLink(text: 'About Oratorio'),
@@ -512,13 +604,9 @@ class _FooterSection extends StatelessWidget {
           const _FooterLink(text: 'Virtual Reality Interface'),
           const _FooterLink(text: 'Kebijakan Privasi'),
           const _FooterLink(text: 'Syarat & Ketentuan'),
-         
           const SizedBox(height: 24),
           const Divider(color: Colors.grey, height: 1),
           const SizedBox(height: 16),
-
-        
-          // Copyright
           const Text(
             '© 2025 Oratorio, Inc.',
             style: TextStyle(color: kFooterText, fontSize: 12),

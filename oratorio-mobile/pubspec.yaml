@@ -33,8 +33,9 @@ dependencies:
     sdk: flutter
   shared_preferences: ^2.2.2
   http: ^1.1.0
-  camera: ^0.10.0
   image_picker: ^0.8.7
+  camera: ^0.10.5+3
+  camera_platform_interface: ^2.6.6
   
   # HTTP harus didefinisikan sejajar dengan 'flutter:', bukan sebagai sub-key-nya.
   # <-- Baris ini sekarang berada di indentasi yang benar
@@ -59,6 +60,11 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+
+android:
+  permissions:
+    - android.permission.CAMERA
+    - android.permission.RECORD_AUDIO
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
